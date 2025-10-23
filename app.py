@@ -165,29 +165,51 @@ def api_auto():
 def api_prenotazioni():
     token = request.headers.get('Authorization','').replace('Bearer ','')
     db = Database()
-    if not db.connect(): return jsonify({'error':'DB'})
+    if not db.connect(): return jsonify({'error':'DB'}), 500
     sess = require_session(db, token)
-    if not sess: return jsonify({'error':'Sessione non valida'})
+    if not sess: return jsonify({'error':'Sessione non valida'}), 401
+
     if request.method=='GET':
         if request.args.get('tutte')=='1' and sess['ruolo']=='admin':
-            rows = db.execute_query("SELECT p.*, u.nome FROM prenotazioni p JOIN utenti u ON p.utente_id=u.id ORDER BY data_prenotazione DESC")
+            rows = db.execute_query(
+                "SELECT p.*, u.nome FROM prenotazioni p JOIN utenti u ON p.utente_id=u.id ORDER BY data_prenotazione DESC"
+            )
         else:
-            rows = db.execute_query("SELECT * FROM prenotazioni WHERE utente_id=%s ORDER BY data_prenotazione DESC", (sess['utente_id'],))
+            rows = db.execute_query(
+                "SELECT * FROM prenotazioni WHERE utente_id=%s ORDER BY data_prenotazione DESC",
+                (sess['utente_id'],)
+            )
         return jsonify({'items': rows or []})
-    d = request.get_json()
+
     if request.method=='POST':
+        d = request.get_json()
         new_id = db.execute_query(
             "INSERT INTO prenotazioni (utente_id, colonnina_id, data_prenotazione, stato) VALUES (%s,%s,%s,%s)",
-            (sess['utente_id'], d.get('colonnina_id'), d.get('data_prenotazione'), d.get('stato','attiva')), fetch=False
+            (sess['utente_id'], d.get('colonnina_id'), d.get('data_prenotazione'), d.get('stato','attiva')),
+            fetch=False
         )
+        # log
+        db.execute_query("INSERT INTO log (utente_id, azione, timestamp) VALUES (%s,%s,NOW())",
+                         (sess['utente_id'], f'prenotazione_creata:{new_id}'), fetch=False)
         return jsonify({'success': True, 'id': new_id})
+
     if request.method=='PUT':
-        db.execute_query("UPDATE prenotazioni SET stato=%s WHERE id=%s AND utente_id=%s",
-                         (d.get('stato'), d.get('id'), sess['utente_id']), fetch=False)
+        d = request.get_json()
+        # consenti all'utente di aggiornare SOLO la propria prenotazione
+        ok = db.execute_query("SELECT id FROM prenotazioni WHERE id=%s AND utente_id=%s",
+                              (d.get('id'), sess['utente_id']))
+        if not ok and sess['ruolo']!='admin':
+            return jsonify({'success': False, 'message':'Non autorizzato'}), 403
+        db.execute_query("UPDATE prenotazioni SET stato=%s WHERE id=%s",
+                         (d.get('stato'), d.get('id')), fetch=False)
+        db.execute_query("INSERT INTO log (utente_id, azione, timestamp) VALUES (%s,%s,NOW())",
+                         (sess['utente_id'], f'prenotazione_update:{d.get("id")}'), fetch=False)
         return jsonify({'success': True})
+
     if request.method=='DELETE':
-        db.execute_query("DELETE FROM prenotazioni WHERE id=%s AND utente_id=%s", (request.args.get('id'), sess['utente_id']), fetch=False)
-        return jsonify({'success': True})
+        # SOFT DELETE: reindirizza alla logica di annullamento
+        pren_id = request.args.get('id', type=int)
+        return api_prenotazione_annulla(pren_id)
 
 # ========== RICARICHE ==========
 @app.route('/api/ricariche', methods=['GET','POST'])
@@ -244,6 +266,32 @@ def api_predizioni():
         (d.get('colonnina_id'), d.get('data_predizione'), d.get('richiesta_prevista')), fetch=False
     )
     return jsonify({'success': True, 'id': new_id})
+
+# ========== PRENOTAZIONI: annulla (PATCH) ==========
+@app.route('/api/prenotazioni/<int:pren_id>/annulla', methods=['PATCH'])
+def api_prenotazione_annulla(pren_id):
+    token = request.headers.get('Authorization','').replace('Bearer ','')
+    db = Database()
+    if not db.connect(): return jsonify({'success': False, 'message':'Errore DB'}), 500
+    sess = require_session(db, token)
+    if not sess: return jsonify({'success': False, 'message':'Sessione non valida'}), 401
+
+    # Controllo proprietà (admin bypass)
+    if sess['ruolo'] != 'admin':
+        owned = db.execute_query("SELECT id FROM prenotazioni WHERE id=%s AND utente_id=%s",
+                                 (pren_id, sess['utente_id']))
+        if not owned:
+            return jsonify({'success': False, 'message':'Non autorizzato'}), 403
+
+    # Aggiorna lo stato
+    db.execute_query("UPDATE prenotazioni SET stato=%s WHERE id=%s", ('annullata', pren_id), fetch=False)
+
+    # Log azione
+    db.execute_query("INSERT INTO log (utente_id, azione, timestamp) VALUES (%s,%s,NOW())",
+                     (sess['utente_id'], f'prenotazione_annullata:{pren_id}'), fetch=False)
+
+    return jsonify({'success': True, 'message':'Prenotazione annullata'})
+
 
 if __name__ == '__main__':
     import os
