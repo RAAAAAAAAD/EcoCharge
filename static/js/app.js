@@ -64,22 +64,30 @@ function Login(){
           <input id="r_nome" placeholder="Nome">
           <input id="r_email" placeholder="Email">
           <input id="r_password" type="password" placeholder="Password">
-          <button onclick="doRegister()">Crea</button>
+         <button onclick="doRegister(event)">Crea</button>
         </div>
       </div>
     </div>`;
 }
 
-async function doRegister(){
-  const btn = event.target;
-  await withBusy(btn, async ()=>{
+async function doRegister(e) {
+  const btn = e?.target; // usa l'evento passato dal bottone
+  await withBusy(btn, async () => {
     const body = {
-      nome: val('r_nome'), email: val('r_email'), password: val('r_password')
+      nome: val('r_nome'),
+      email: val('r_email'),
+      password: val('r_password')
     };
-    const res = await api('/api/register', {method:'POST', body: JSON.stringify(body)});
-    if(res.success) toast('Registrazione completata'); else toast(res.message||'Errore registrazione', true);
+    try {
+      const res = await api('/api/register', { method:'POST', body: JSON.stringify(body) });
+      if (res.success) toast('Registrazione completata');
+      else toast(res.message || 'Errore registrazione', true);
+    } catch {
+      toast('Impossibile contattare il server', true);
+    }
   });
 }
+
 
 async function doLogin(){
   const btn = event.target;

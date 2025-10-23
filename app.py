@@ -58,7 +58,7 @@ def index():
 @app.route('/api/register', methods=['POST'])
 def api_register():
     d = request.get_json()
-    nome = d.get('nome'); email = d.get('email'); password = d.get('password'); ruolo = d.get('ruolo','user')
+    nome = d.get('nome'); email = d.get('email'); password = d.get('password'); ruolo = 'utente'
     if not all([nome, email, password]): return jsonify({'success': False, 'message': 'Campi obbligatori mancanti'})
     db = Database()
     if not db.connect(): return jsonify({'success': False, 'message': 'Errore DB'})
