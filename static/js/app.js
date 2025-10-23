@@ -93,7 +93,6 @@ async function doLogin(){
     } else toast(res.message||'Credenziali non valide', true);
   });
 }
-
 function logout(){
   api('/api/logout',{method:'POST'}).finally(()=>{
     localStorage.removeItem('token'); localStorage.removeItem('user');
@@ -109,11 +108,9 @@ async function Dashboard(){
   `);
 }
 
-let map, markersLayer;
-
 async function Colonnine(){
   const data = await api('/api/colonnine');
-  layout(`
+  layout(html`
     <div class="card">
       <h2>Colonnine</h2>
       <div class="grid">
@@ -125,94 +122,41 @@ async function Colonnine(){
         <input id="c_nil" placeholder="NIL">
         <button onclick="addColonnina()" class="primary">Aggiungi</button>
       </div>
+      <table>
+        <thead><tr><th>ID</th><th>Indirizzo</th><th>kW</th><th>Quartiere</th><th></th></tr></thead>
+        <tbody>${(data.items||[]).map(c=>`
+          <tr>
+            <td>${c.id}</td><td>${c.indirizzo}</td><td>${c.potenza_kW}</td><td>${c.quartiere||''}</td>
+            <td><button onclick="delCol(${c.id})">Elimina</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
     </div>
-    <div id="map" class="card" style="padding:0"></div>
   `);
-
-  // Inizializza o ricollega la mappa
-  setTimeout(()=>{ // dà tempo al DOM di montare
-    if(!map){
-      map = L.map('map').setView([45.4642, 9.19], 12);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
-      markersLayer = L.layerGroup().addTo(map);
-      map.on('click', e=>{
-        document.getElementById('c_lat').value = e.latlng.lat.toFixed(6);
-        document.getElementById('c_lng').value = e.latlng.lng.toFixed(6);
-        toast('Coordinate impostate dal click');
-      });
-    } else {
-      map.invalidateSize(); // importante dopo ogni re-render
-    }
-    drawColumnsOnMap(data.items||[]);
-  }, 0);
 }
 async function addColonnina(){
   const btn = event.target;
-  const lat = num('c_lat'), lng = num('c_lng'), kw = num('c_kw');
-  const indirizzo = val('c_indirizzo');
-  if(!indirizzo || lat==null || lng==null) return toast('Indirizzo e coordinate sono obbligatori', true);
-
   await withBusy(btn, async ()=>{
     const body = {
-      indirizzo, latitudine: lat, longitudine: lng,
-      potenza_kW: kw ?? 0, quartiere: val('c_qua')||null, NIL: val('c_nil')||null
+      indirizzo: val('c_indirizzo'), latitudine: num('c_lat'), longitudine: num('c_lng'),
+      potenza_kW: num('c_kw'), quartiere: val('c_qua'), NIL: val('c_nil')
     };
     const res = await api('/api/colonnine',{method:'POST', body: JSON.stringify(body)});
-    if(res.success){ toast('Colonnina aggiunta con successo'); await Colonnine(); }
-    else toast(res.error||'Errore aggiunta colonnina', true);
+    if(res.success){
+      toast('Colonnina aggiunta con successo');
+      await Colonnine(); // refresh lista
+    } else toast('Errore aggiunta colonnina', true);
   });
 }
 
-
-function drawColumnsOnMap(items){
-  if(!markersLayer) return;
-  markersLayer.clearLayers();
-  const bounds = [];
-  items.forEach(c=>{
-    if(c.latitudine==null || c.longitudine==null) return;
-    const m = L.marker([c.latitudine, c.longitudine]).addTo(markersLayer);
-    const popupHtml = `
-      <div>
-        <b>${c.indirizzo||'Senza indirizzo'}</b><br>
-        kW: ${c.potenza_kW??'-'}<br>
-        Quartiere: ${c.quartiere||'-'}<br>
-        <button class="btn-del-col" data-id="${c.id}">Elimina</button>
-      </div>`;
-    m.bindPopup(popupHtml);
-    m.on('popupopen', (ev)=>{
-      const btn = ev.popup.getElement().querySelector('.btn-del-col');
-      if(btn){
-        btn.addEventListener('click', async ()=>{
-          if(!confirm('Eliminare colonnina?')) return;
-          await withBusy(btn, async ()=>{
-            const res = await api('/api/colonnine?id='+btn.dataset.id,{method:'DELETE'});
-            if(res.success){ toast('Colonnina eliminata'); await Colonnine(); }
-            else toast('Errore eliminazione', true);
-          });
-        });
-      }
-    });
-    bounds.push([c.latitudine, c.longitudine]);
+async function delCol(id){
+  if(!confirm('Eliminare colonnina?')) return;
+  const btn = event.target;
+  await withBusy(btn, async ()=>{
+    const res = await api('/api/colonnine?id='+id,{method:'DELETE'});
+    if(res.success){ toast('Colonnina eliminata'); await Colonnine(); }
+    else toast('Errore eliminazione', true);
   });
-  if(bounds.length) map.fitBounds(bounds, { padding:[30,30] });
-}
-function toast(msg, isError=false){
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast ' + (isError ? 'error' : '');
-  requestAnimationFrame(()=> t.classList.add('show'));
-  setTimeout(()=> t.classList.remove('show'), 2500);
-}
-function withBusy(btn, fn){
-  const old = btn.innerHTML;
-  btn.classList.add('btn-wait');
-  btn.innerHTML = `<span class="spinner"></span> ${old}`;
-  return Promise.resolve()
-    .then(fn)
-    .finally(()=>{
-      btn.classList.remove('btn-wait');
-      btn.innerHTML = old;
-    });
 }
 
 async function Prenotazioni(){
@@ -239,14 +183,15 @@ async function Prenotazioni(){
     </div>
   `);
 }
-async function delPren(id, btnEl){
-  await withBusy(btnEl, async ()=>{
-    const res = await api(`/api/prenotazioni/${id}/annulla`, { method: 'PATCH' });
-    if(res.success){ toast('Prenotazione annullata'); await Prenotazioni(); }
-    else toast(res.message||'Errore annullamento', true);
+async function addPren(){
+  const btn = event.target;
+  await withBusy(btn, async ()=>{
+    const body = { colonnina_id: num('p_col'), data_prenotazione: val('p_data'), stato:'attiva' };
+    const res = await api('/api/prenotazioni',{method:'POST', body: JSON.stringify(body)});
+    if(res.success){ toast('Prenotazione effettuata con successo'); await Prenotazioni(); }
+    else toast('Errore prenotazione', true);
   });
 }
-
 async function delPren(id){
   const btn = event.target;
   await withBusy(btn, async ()=>{
@@ -255,6 +200,8 @@ async function delPren(id){
     else toast('Errore annullamento', true);
   });
 }
+
+
 
 async function Ricariche(){
   const data = await api('/api/ricariche');
@@ -291,6 +238,7 @@ async function addRic(){
     else toast('Errore registrazione ricarica', true);
   });
 }
+
 
 function toast(msg, isError=false){
   const t = document.getElementById('toast');
